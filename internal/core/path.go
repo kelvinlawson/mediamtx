@@ -694,6 +694,7 @@ func (pa *path) setReady(desc *description.Session, generateRTPPackets bool, fil
 		GenerateRTPPackets: generateRTPPackets,
 		FillNTP:            fillNTP,
 		Parent:             pa.source,
+		PathConf:           pa.conf,
 	}
 	err := pa.stream.Initialize()
 	if err != nil {

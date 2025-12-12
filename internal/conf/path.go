@@ -154,6 +154,11 @@ type Path struct {
 	RTSPRangeStart        string         `json:"rtspRangeStart"`
 	RTSPUDPReadBufferSize *uint          `json:"rtspUDPReadBufferSize,omitempty"` // deprecated
 
+	// RTSP publisher
+	RTSPPublishMulticastIP       string `json:"rtspPublishMulticastIP"`
+	RTSPPublishMulticastRTPPort  *int   `json:"rtspPublishMulticastRTPPort"`
+	RTSPPublishMulticastRTCPPort *int   `json:"rtspPublishMulticastRTCPPort"`
+
 	// MPEG-TS source
 	MPEGTSUDPReadBufferSize *uint `json:"mpegtsUDPReadBufferSize,omitempty"` // deprecated
 
@@ -212,6 +217,9 @@ type Path struct {
 	RPICameraSecondaryHeight       uint      `json:"-"` // filled by Check()
 	RPICameraSecondaryFPS          float64   `json:"-"` // filled by Check()
 	RPICameraSecondaryMJPEGQuality uint      `json:"-"` // filled by Check()
+
+	// Local Encoder source
+	LocalEncoderStreamID uint `json:"localEncoderStreamID"`
 
 	// Hooks
 	RunOnInit                  string   `json:"runOnInit"`
@@ -628,6 +636,8 @@ func (pconf *Path) validate(
 			primary.RPICameraSecondaryMJPEGQuality = pconf.RPICameraMJPEGQuality
 		}
 
+	case pconf.Source == "localEncoder":
+
 	default:
 		return fmt.Errorf("invalid source: '%s'", pconf.Source)
 	}
@@ -744,6 +754,18 @@ func (pconf *Path) validate(
 				}},
 			})
 		}()
+	}
+
+	// Local Encoder source
+
+	if pconf.Source == "localEncoder" {
+		for otherName, otherPath := range conf.Paths {
+			if otherPath != pconf && otherPath != nil &&
+				otherPath.Source == "localEncoder" && otherPath.LocalEncoderStreamID == pconf.LocalEncoderStreamID {
+				return fmt.Errorf("'localEncoder' with same stream ID %d is used as source in two paths, '%s' and '%s'",
+					pconf.LocalEncoderStreamID, name, otherName)
+			}
+		}
 	}
 
 	// Hooks

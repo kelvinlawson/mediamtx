@@ -2,6 +2,7 @@
 package stream
 
 import (
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/pion/rtp"
 
+	"github.com/bluenviron/mediamtx/internal/conf"
 	"github.com/bluenviron/mediamtx/internal/counterdumper"
 	"github.com/bluenviron/mediamtx/internal/logger"
 	"github.com/bluenviron/mediamtx/internal/unit"
@@ -25,6 +27,7 @@ type Stream struct {
 	GenerateRTPPackets bool
 	FillNTP            bool
 	Parent             logger.Writer
+	PathConf           *conf.Path
 
 	bytesReceived    *uint64
 	bytesSent        *uint64
@@ -117,9 +120,28 @@ func (s *Stream) RTSPStream(server *gortsplib.Server) *gortsplib.ServerStream {
 	defer s.mutex.Unlock()
 
 	if s.rtspStream == nil {
+		var multicastIP *net.IP = nil
+		var multicastRTPPort *int = nil
+		var multicastRTCPPort *int = nil
+
+		// use path-specific Multicast IP address and ports if configured
+		if s.PathConf.RTSPPublishMulticastIP != "" {
+			parsed_ip := net.ParseIP(s.PathConf.RTSPPublishMulticastIP)
+			multicastIP = &parsed_ip
+		}
+		if s.PathConf.RTSPPublishMulticastRTPPort != nil {
+			multicastRTPPort = s.PathConf.RTSPPublishMulticastRTPPort
+		}
+		if s.PathConf.RTSPPublishMulticastRTCPPort != nil {
+			multicastRTCPPort = s.PathConf.RTSPPublishMulticastRTCPPort
+		}
+
 		s.rtspStream = &gortsplib.ServerStream{
-			Server: server,
-			Desc:   s.Desc,
+			Server:            server,
+			Desc:              s.Desc,
+			MulticastIP:       multicastIP,
+			MulticastRTPPort:  multicastRTPPort,
+			MulticastRTCPPort: multicastRTCPPort,
 		}
 		err := s.rtspStream.Initialize()
 		if err != nil {
