@@ -546,12 +546,18 @@ pathDefaults:
   ###############################################
   # Default path settings -> RTSP publishing (when publishing via RTSP)
 
-  # IP address used for all UDP-multicast listeners to this path.
-  rtspPublishMulticastIP: 
-  # Port used for all UDP-multicast/RTP listeners to this path.
-  rtspPublishMulticastRTPPort:
-  # Port used for all UDP-multicast/RTCP listeners to this path.
-  rtspPublishMulticastRTCPPort:
+  # IP address used for all UDP-multicast listeners to this path (one per media type)
+  rtspPublishMulticastIPVideo: 
+  rtspPublishMulticastIPAudio: 
+  rtspPublishMulticastIPApplication: 
+  # Port used for all UDP-multicast/RTP listeners to this path (one per media type)
+  rtspPublishMulticastRTPPortVideo:
+  rtspPublishMulticastRTPPortAudio:
+  rtspPublishMulticastRTPPortApplication:
+  # Port used for all UDP-multicast/RTCP listeners to this path (one per media type)
+  rtspPublishMulticastRTCPPortVideo:
+  rtspPublishMulticastRTCPPortAudio:
+  rtspPublishMulticastRTCPPortApplication:
 
   ###############################################
   # Default path settings -> RTP source (when source is RTP)

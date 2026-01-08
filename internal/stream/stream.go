@@ -120,28 +120,54 @@ func (s *Stream) RTSPStream(server *gortsplib.Server) *gortsplib.ServerStream {
 	defer s.mutex.Unlock()
 
 	if s.rtspStream == nil {
-		var multicastIP *net.IP = nil
-		var multicastRTPPort *int = nil
-		var multicastRTCPPort *int = nil
+		// Potential media types for stream and media-specific multicast IP address & ports
+		mediVideo := &description.Media{
+			Type: description.MediaTypeVideo,
+		}
+		mediAudio := &description.Media{
+			Type: description.MediaTypeAudio,
+		}
+		mediApplication := &description.Media{
+			Type: description.MediaTypeApplication,
+		}
 
-		// use path-specific Multicast IP address and ports if configured
-		if s.PathConf.RTSPPublishMulticastIP != "" {
-			parsed_ip := net.ParseIP(s.PathConf.RTSPPublishMulticastIP)
-			multicastIP = &parsed_ip
+		// Create a list of media-specific multicast params and add any that we want to force
+		multicastParams := make(map[*description.Media]gortsplib.StreamMediaMulticastParams)
+
+		// Check if we have any path-specific ports for media type Video
+		if s.PathConf.RTSPPublishMulticastIPVideo != "" && s.PathConf.RTSPPublishMulticastRTPPortVideo != nil && s.PathConf.RTSPPublishMulticastRTCPPortVideo != nil {
+			parsed_ip := net.ParseIP(s.PathConf.RTSPPublishMulticastIPVideo)
+			multicastParams[mediVideo] = gortsplib.StreamMediaMulticastParams{
+				IP:       parsed_ip,
+				RTPPort:  *s.PathConf.RTSPPublishMulticastRTPPortVideo,
+				RTCPPort: *s.PathConf.RTSPPublishMulticastRTCPPortVideo,
+			}
 		}
-		if s.PathConf.RTSPPublishMulticastRTPPort != nil {
-			multicastRTPPort = s.PathConf.RTSPPublishMulticastRTPPort
+
+		// Check if we have any path-specific ports for media type Audio
+		if s.PathConf.RTSPPublishMulticastIPAudio != "" && s.PathConf.RTSPPublishMulticastRTPPortAudio != nil && s.PathConf.RTSPPublishMulticastRTCPPortAudio != nil {
+			parsed_ip := net.ParseIP(s.PathConf.RTSPPublishMulticastIPAudio)
+			multicastParams[mediAudio] = gortsplib.StreamMediaMulticastParams{
+				IP:       parsed_ip,
+				RTPPort:  *s.PathConf.RTSPPublishMulticastRTPPortAudio,
+				RTCPPort: *s.PathConf.RTSPPublishMulticastRTCPPortAudio,
+			}
 		}
-		if s.PathConf.RTSPPublishMulticastRTCPPort != nil {
-			multicastRTCPPort = s.PathConf.RTSPPublishMulticastRTCPPort
+
+		// Check if we have any path-specific ports for media type Application (Metadata)
+		if s.PathConf.RTSPPublishMulticastIPApplication != "" && s.PathConf.RTSPPublishMulticastRTPPortApplication != nil && s.PathConf.RTSPPublishMulticastRTCPPortApplication != nil {
+			parsed_ip := net.ParseIP(s.PathConf.RTSPPublishMulticastIPApplication)
+			multicastParams[mediApplication] = gortsplib.StreamMediaMulticastParams{
+				IP:       parsed_ip,
+				RTPPort:  *s.PathConf.RTSPPublishMulticastRTPPortApplication,
+				RTCPPort: *s.PathConf.RTSPPublishMulticastRTCPPortApplication,
+			}
 		}
 
 		s.rtspStream = &gortsplib.ServerStream{
-			Server:            server,
-			Desc:              s.Desc,
-			MulticastIP:       multicastIP,
-			MulticastRTPPort:  multicastRTPPort,
-			MulticastRTCPPort: multicastRTCPPort,
+			Server:          server,
+			Desc:            s.Desc,
+			MulticastParams: multicastParams,
 		}
 		err := s.rtspStream.Initialize()
 		if err != nil {
