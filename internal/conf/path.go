@@ -231,6 +231,17 @@ type Path struct {
 	RTSPUDPReadBufferSize  *uint          `json:"rtspUDPReadBufferSize,omitempty" deprecated:"true"`
 	RTSPUDPSourcePortRange []uint         `json:"rtspUDPSourcePortRange"`
 
+	// RTSP publisher
+	RTSPPublishMulticastIPVideo             string `json:"rtspPublishMulticastIPVideo"`
+	RTSPPublishMulticastIPAudio             string `json:"rtspPublishMulticastIPAudio"`
+	RTSPPublishMulticastIPApplication       string `json:"rtspPublishMulticastIPApplication"`
+	RTSPPublishMulticastRTPPortVideo        *int   `json:"rtspPublishMulticastRTPPortVideo"`
+	RTSPPublishMulticastRTPPortAudio        *int   `json:"rtspPublishMulticastRTPPortAudio"`
+	RTSPPublishMulticastRTPPortApplication  *int   `json:"rtspPublishMulticastRTPPortApplication"`
+	RTSPPublishMulticastRTCPPortVideo       *int   `json:"rtspPublishMulticastRTCPPortVideo"`
+	RTSPPublishMulticastRTCPPortAudio       *int   `json:"rtspPublishMulticastRTCPPortAudio"`
+	RTSPPublishMulticastRTCPPortApplication *int   `json:"rtspPublishMulticastRTCPPortApplication"`
+
 	// MPEG-TS source
 	MPEGTSUDPReadBufferSize *uint `json:"mpegtsUDPReadBufferSize,omitempty" deprecated:"true"`
 

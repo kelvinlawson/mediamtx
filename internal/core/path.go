@@ -816,6 +816,7 @@ func (pa *path) setAvailable(
 		WriteQueueSize:        pa.writeQueueSize,
 		RTPMaxPayloadSize:     pa.rtpMaxPayloadSize,
 		ReplaceNTP:            replaceNTP,
+		PathConf:              pa.conf,
 		Parent:                pa,
 	}
 	err := pa.stream.Initialize()

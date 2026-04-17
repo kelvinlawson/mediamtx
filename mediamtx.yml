@@ -573,6 +573,23 @@ pathDefaults:
   rtspUDPSourcePortRange: [10000, 65535]
 
   ###############################################
+  # Default path settings -> RTSP publisher (when source is "publisher" and publisher uses RTSP)
+
+  # Override the multicast destination for each media type when the RTSP publisher
+  # requests multicast transport. If all three fields (IP, RTP port, RTCP port) are set
+  # for a given media type, the server ignores the client's proposed multicast parameters
+  # and uses these instead. Leave unset (empty / null) to preserve upstream behavior.
+  rtspPublishMulticastIPVideo:
+  rtspPublishMulticastIPAudio:
+  rtspPublishMulticastIPApplication:
+  rtspPublishMulticastRTPPortVideo:
+  rtspPublishMulticastRTPPortAudio:
+  rtspPublishMulticastRTPPortApplication:
+  rtspPublishMulticastRTCPPortVideo:
+  rtspPublishMulticastRTCPPortAudio:
+  rtspPublishMulticastRTCPPortApplication:
+
+  ###############################################
   # Default path settings -> RTP source (when source is RTP)
 
   # session description protocol (SDP) of the RTP stream.
