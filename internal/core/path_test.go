@@ -18,6 +18,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5"
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
+	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/bluenviron/gortsplib/v5/pkg/headers"
 	"github.com/bluenviron/gortsplib/v5/pkg/sdp"
 	srt "github.com/datarhei/gosrt"
@@ -49,6 +50,95 @@ func (sh *testServer) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Respo
 }
 
 var _ defs.Path = &path{}
+
+func TestPathRTSPPublishMulticastPathOverride(t *testing.T) {
+	p, ok := newInstance("rtmp: no\n" +
+		"hls: no\n" +
+		"webrtc: no\n" +
+		"srt: no\n" +
+		"rtspTransports: [tcp, multicast]\n" +
+		"multicastIPRange: 224.1.0.0/16\n" +
+		"multicastRTPPort: 8002\n" +
+		"multicastRTCPPort: 8003\n" +
+		"paths:\n" +
+		"  teststream:\n" +
+		"    rtspPublishMulticastIPVideo: 224.10.0.1\n" +
+		"    rtspPublishMulticastRTPPortVideo: 10000\n" +
+		"    rtspPublishMulticastRTCPPortVideo: 10001\n")
+	require.Equal(t, true, ok)
+	defer p.Close()
+
+	videoMedia := &description.Media{
+		Type:    description.MediaTypeVideo,
+		Formats: []format.Format{&format.H264{PayloadTyp: 96, PacketizationMode: 1}},
+	}
+
+	source := gortsplib.Client{}
+	err := source.StartRecording(
+		"rtsp://127.0.0.1:8554/teststream",
+		&description.Session{Medias: []*description.Media{videoMedia}},
+	)
+	require.NoError(t, err)
+	defer source.Close()
+
+	conn, err := net.Dial("tcp", "127.0.0.1:8554")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	br := bufio.NewReader(conn)
+
+	u, err := base.ParseURL("rtsp://127.0.0.1:8554/teststream")
+	require.NoError(t, err)
+
+	byts, err := base.Request{
+		Method: base.Describe,
+		URL:    u,
+		Header: base.Header{
+			"CSeq": base.HeaderValue{"1"},
+		},
+	}.Marshal()
+	require.NoError(t, err)
+
+	_, err = conn.Write(byts)
+	require.NoError(t, err)
+
+	var describeRes base.Response
+	err = describeRes.Unmarshal(br)
+	require.NoError(t, err)
+	require.Equal(t, base.StatusOK, describeRes.StatusCode)
+
+	var desc sdp.SessionDescription
+	err = desc.Unmarshal(describeRes.Body)
+	require.NoError(t, err)
+	require.Len(t, desc.MediaDescriptions, 1)
+
+	control, ok := desc.MediaDescriptions[0].Attribute("control")
+	require.True(t, ok)
+
+	setupURL, err := base.ParseURL("rtsp://127.0.0.1:8554/teststream/" + control)
+	require.NoError(t, err)
+
+	byts, err = base.Request{
+		Method: base.Setup,
+		URL:    setupURL,
+		Header: base.Header{
+			"CSeq":      base.HeaderValue{"2"},
+			"Transport": base.HeaderValue{"RTP/AVP;multicast;mode=play"},
+		},
+	}.Marshal()
+	require.NoError(t, err)
+
+	_, err = conn.Write(byts)
+	require.NoError(t, err)
+
+	var setupRes base.Response
+	err = setupRes.Unmarshal(br)
+	require.NoError(t, err)
+	require.Equal(t, base.StatusOK, setupRes.StatusCode)
+	require.Contains(t, setupRes.Header["Transport"][0], "multicast")
+	require.Contains(t, setupRes.Header["Transport"][0], "destination=224.10.0.1")
+	require.Contains(t, setupRes.Header["Transport"][0], "port=10000-10001")
+}
 
 func TestPathRunOnDemand(t *testing.T) {
 	onDemand := filepath.Join(os.TempDir(), "on_demand")
