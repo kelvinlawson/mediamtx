@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
+	"github.com/bluenviron/gortsplib/v5/pkg/sdp"
 	mpegts "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts"
 	tscodecs "github.com/bluenviron/mediacommon/v2/pkg/formats/mpegts/codecs"
 	"github.com/bluenviron/mediamtx/internal/auth"
@@ -532,6 +535,273 @@ func TestServerRead(t *testing.T) {
 			}, list)
 		})
 	}
+}
+
+func TestServerReadMulticastPathOverrides(t *testing.T) {
+	pathConf := &conf.Path{
+		RTSPPublishMulticastIPVideo:             "224.10.0.1",
+		RTSPPublishMulticastIPAudio:             "224.10.0.2",
+		RTSPPublishMulticastIPApplication:       "224.10.0.3",
+		RTSPPublishMulticastRTPPortVideo:        ptrOf(10000),
+		RTSPPublishMulticastRTPPortAudio:        ptrOf(10002),
+		RTSPPublishMulticastRTPPortApplication:  ptrOf(10004),
+		RTSPPublishMulticastRTCPPortVideo:       ptrOf(10001),
+		RTSPPublishMulticastRTCPPortAudio:       ptrOf(10003),
+		RTSPPublishMulticastRTCPPortApplication: ptrOf(10005),
+	}
+
+	var strm *stream.Stream
+
+	pathManager := &test.PathManager{
+		FindPathConfImpl: func(req defs.PathFindPathConfReq) (*defs.PathFindPathConfRes, error) {
+			require.Equal(t, "teststream", req.AccessRequest.Name)
+			return &defs.PathFindPathConfRes{Conf: pathConf}, nil
+		},
+		DescribeImpl: func(req defs.PathDescribeReq) defs.PathDescribeRes {
+			require.Equal(t, "teststream", req.AccessRequest.Name)
+			require.NotNil(t, strm)
+			return defs.PathDescribeRes{
+				Path:   &dummyPath{},
+				Stream: strm,
+			}
+		},
+		AddPublisherImpl: func(req defs.PathAddPublisherReq) (*defs.PathAddPublisherRes, error) {
+			require.Equal(t, "teststream", req.AccessRequest.Name)
+			require.True(t, req.UseRTPPackets)
+			require.True(t, req.ReplaceNTP)
+			require.Same(t, pathConf, req.ConfToCompare)
+
+			strm = &stream.Stream{
+				Desc:              req.Desc,
+				PathConf:          pathConf,
+				WriteQueueSize:    512,
+				RTPMaxPayloadSize: 1450,
+				Parent:            test.NilLogger,
+			}
+			err := strm.Initialize()
+			require.NoError(t, err)
+
+			subStream := &stream.SubStream{
+				Stream:        strm,
+				UseRTPPackets: true,
+			}
+			err = subStream.Initialize()
+			require.NoError(t, err)
+
+			return &defs.PathAddPublisherRes{Path: &dummyPath{}, SubStream: subStream}, nil
+		},
+		AddReaderImpl: func(req defs.PathAddReaderReq) (*defs.PathAddReaderRes, error) {
+			require.Equal(t, "teststream", req.AccessRequest.Name)
+			require.NotNil(t, strm)
+			return &defs.PathAddReaderRes{
+				Path:   &dummyPath{},
+				Stream: strm,
+			}, nil
+		},
+	}
+
+	transports := conf.RTSPTransports{
+		gortsplib.ProtocolTCP:          {},
+		gortsplib.ProtocolUDPMulticast: {},
+	}
+
+	s := &Server{
+		Address:           "127.0.0.1:8557",
+		ReadTimeout:       conf.Duration(10 * time.Second),
+		WriteTimeout:      conf.Duration(10 * time.Second),
+		WriteQueueSize:    512,
+		RTSPTransports:    transports,
+		Transports:        transports,
+		MulticastIPRange:  "224.1.0.0/16",
+		MulticastRTPPort:  8002,
+		MulticastRTCPPort: 8003,
+		PathManager:       pathManager,
+		Parent:            test.NilLogger,
+	}
+	err := s.Initialize()
+	require.NoError(t, err)
+	defer s.Close()
+
+	source := gortsplib.Client{}
+
+	videoMedia := test.UniqueMediaH264()
+	audioMedia := test.UniqueMediaMPEG4Audio()
+	applicationMedia := &description.Media{
+		Type:    description.MediaTypeApplication,
+		Formats: []format.Format{&format.KLV{PayloadTyp: 98}},
+	}
+
+	audioEncoder, err := audioMedia.Formats[0].(*format.MPEG4Audio).CreateEncoder()
+	require.NoError(t, err)
+
+	err = source.StartRecording(
+		"rtsp://127.0.0.1:8557/teststream",
+		&description.Session{Medias: []*description.Media{videoMedia, audioMedia, applicationMedia}},
+	)
+	require.NoError(t, err)
+	defer source.Close()
+
+	conn, err := net.Dial("tcp", "127.0.0.1:8557")
+	require.NoError(t, err)
+	defer conn.Close()
+
+	br := bufio.NewReader(conn)
+
+	u, err := base.ParseURL("rtsp://127.0.0.1:8557/teststream")
+	require.NoError(t, err)
+
+	byts, err := base.Request{
+		Method: base.Describe,
+		URL:    u,
+		Header: base.Header{
+			"CSeq": base.HeaderValue{"1"},
+		},
+	}.Marshal()
+	require.NoError(t, err)
+
+	_, err = conn.Write(byts)
+	require.NoError(t, err)
+
+	var describeRes base.Response
+	err = describeRes.Unmarshal(br)
+	require.NoError(t, err)
+	require.Equal(t, base.StatusOK, describeRes.StatusCode)
+
+	var desc sdp.SessionDescription
+	err = desc.Unmarshal(describeRes.Body)
+	require.NoError(t, err)
+	require.Len(t, desc.MediaDescriptions, 3)
+
+	controlURL := func(control string) string {
+		if strings.HasPrefix(control, "rtsp://") || strings.HasPrefix(control, "rtsps://") {
+			return control
+		}
+		return "rtsp://127.0.0.1:8557/teststream/" + control
+	}
+
+	expected := []struct {
+		mediaType string
+		ip        string
+		rtpPort   int
+		rtcpPort  int
+	}{
+		{"video", "224.10.0.1", 10000, 10001},
+		{"audio", "224.10.0.2", 10002, 10003},
+		{"application", "224.10.0.3", 10004, 10005},
+	}
+
+	var sessionID string
+
+	for i, mediaDesc := range desc.MediaDescriptions {
+		control, ok := mediaDesc.Attribute("control")
+		require.True(t, ok)
+
+		setupURL, err := base.ParseURL(controlURL(control))
+		require.NoError(t, err)
+
+		header := base.Header{
+			"CSeq":      base.HeaderValue{fmt.Sprintf("%d", i+2)},
+			"Transport": base.HeaderValue{"RTP/AVP;multicast;mode=play"},
+		}
+		if sessionID != "" {
+			header["Session"] = base.HeaderValue{sessionID}
+		}
+
+		byts, err = base.Request{
+			Method: base.Setup,
+			URL:    setupURL,
+			Header: header,
+		}.Marshal()
+		require.NoError(t, err)
+
+		_, err = conn.Write(byts)
+		require.NoError(t, err)
+
+		var setupRes base.Response
+		err = setupRes.Unmarshal(br)
+		require.NoError(t, err)
+		require.Equal(t, base.StatusOK, setupRes.StatusCode)
+
+		require.Contains(t, setupRes.Header["Transport"][0], "multicast")
+		require.Contains(t, setupRes.Header["Transport"][0], "destination="+expected[i].ip)
+		require.Contains(t, setupRes.Header["Transport"][0],
+			fmt.Sprintf("port=%d-%d", expected[i].rtpPort, expected[i].rtcpPort))
+
+		rawSessionID, ok := setupRes.Header["Session"]
+		require.True(t, ok)
+		require.NotEmpty(t, rawSessionID)
+		require.Equal(t, expected[i].mediaType, mediaDesc.MediaName.Media)
+		sessionID = strings.Split(rawSessionID[0], ";")[0]
+	}
+
+	byts, err = base.Request{
+		Method: base.Play,
+		URL:    u,
+		Header: base.Header{
+			"CSeq":    base.HeaderValue{"5"},
+			"Session": base.HeaderValue{sessionID},
+		},
+	}.Marshal()
+	require.NoError(t, err)
+
+	_, err = conn.Write(byts)
+	require.NoError(t, err)
+
+	var playRes base.Response
+	err = playRes.Unmarshal(br)
+	require.NoError(t, err)
+	require.Equal(t, base.StatusOK, playRes.StatusCode)
+
+	// Emit multiple packets per media after PLAY so external captures can
+	// reliably observe traffic on each configured multicast RTP port.
+	time.Sleep(300 * time.Millisecond)
+
+	for i := range 5 {
+		err = source.WritePacketRTP(videoMedia, &rtp.Packet{
+			Header: rtp.Header{
+				Version:        2,
+				Marker:         true,
+				PayloadType:    96,
+				SequenceNumber: uint16(1200 + i),
+				Timestamp:      90000 + uint32(i)*90000,
+				SSRC:           0x10101010,
+			},
+			Payload: []byte{0x05, 0x01, 0x02, 0x03},
+		})
+		require.NoError(t, err)
+
+		audioPackets, err := audioEncoder.Encode([][]byte{{0x01, 0x02, 0x03, 0x04}})
+		require.NoError(t, err)
+		require.Len(t, audioPackets, 1)
+		audioPacket := audioPackets[0]
+		audioPacket.SequenceNumber = uint16(2200 + i)
+		audioPacket.Timestamp = 44100 + uint32(i)*1024
+		audioPacket.SSRC = 0x20202020
+
+		err = source.WritePacketRTP(audioMedia, audioPacket)
+		require.NoError(t, err)
+
+		err = source.WritePacketRTP(applicationMedia, &rtp.Packet{
+			Header: rtp.Header{
+				Version:        2,
+				Marker:         true,
+				PayloadType:    98,
+				SequenceNumber: uint16(3200 + i),
+				Timestamp:      12345 + uint32(i)*900,
+				SSRC:           0x30303030,
+			},
+			Payload: []byte{
+				0x06, 0x0e, 0x2b, 0x34, 0x02, 0x0b, 0x01, 0x01,
+				0x0e, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0x00,
+				0x01, 0xff,
+			},
+		})
+		require.NoError(t, err)
+
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	time.Sleep(300 * time.Millisecond)
 }
 
 func TestServerRedirect(t *testing.T) {
